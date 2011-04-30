@@ -1,0 +1,5 @@
+name = Gamemun AC
+description = give ac for facebok
+core = 6.x
+version = 6.x-0.1-alpha
+package = NAzT

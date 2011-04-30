@@ -1,0 +1,185 @@
+<?php
+/**
+  * Implementation of hook_menu()
+  */
+function fb_ac_menu() {
+  $items['admin/settings/fb_ac'] = array(
+      'title' => 'Facebook AC Settings',
+      'description' => 'Setting facebook app detail',
+      'access callback' => TRUE,
+      'page callback' => 'drupal_get_form',
+      'page arguments' => array('fb_util_settings_form'),
+      'type' => MENU_NORMAL_ITEM,
+      'file' => 'fb_ac.admin.inc'
+  );
+  $items['facebook/page/verify'] = array(
+    'title' => t('Verify FB'),
+    'page callback' => 'verify_js',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
+
+  $items['facebook/util/info/fbuid/%'] = array(
+      'title' => 'get fbuid info',
+      'description' => 'Utility page to get fbuid info',
+      'page callback' => 'page_get_fbuid_info',
+      'page arguments' => array(4),
+      'access callback' => TRUE,
+      'type' => MENU_CALLBACK,
+  );
+
+  $items['facebook/util/ac/remaining'] = array(
+      'title' => 'get ac remaining',
+      'description' => 'same as title',
+      'page callback' => 'page_get_ac_remaining',
+      'page arguments' => NULL,
+      'access callback' => TRUE,
+      'type' => MENU_CALLBACK,
+  );
+
+  $items['facebook/page/ac/get'] = array(
+      'title' => 'Get AC Page',
+      'page callback' => 'page_get_ac',
+      'access callback' => TRUE,
+      'type' => MENU_CALLBACK,
+      'file' => 'get_ac.page.inc');
+
+
+
+
+  return $items;
+}
+
+function page_get_fbuid_info($fbuid) {
+  $term = taxonomy_get_term_by_name($fbuid);
+  $term = $term[0];
+  $node_is_used_tid = 1;
+
+  $selected_node = _matching_ac_code($node_is_used_tid, $term->tid);
+
+  $fb_session = json_decode($_POST['fb_session']);
+  $fbuid = $fb_session->uid;
+
+  $app_secret = variable_get('fb_util_app_secret_key', '');
+  $fb_post_object = json_decode($_POST['fb_post_object']);
+  $validated_session = _validate_facebook_session((array)$fb_session, $app_secret);
+
+  $out = array('status' => 'error');
+  $remaining_ac = _get_ac_remaining();
+  if(!$validated_session || $remaining_ac <=0) {
+    print drupal_json(array('status' => 'error', 'remaining' => $remaining_ac));
+    return;
+  }
+  if ($selected_node) {
+    $out['status'] = 'ok';
+    $out['code'] = $selected_node->title;
+    $out['type'] = 'exists';
+    $out['id'] = $selected_node->nid;
+  }
+  else {
+    $code = process_new_ac($validated_session);
+    $code = _matching_ac_code($node_is_used_tid, $term->tid);
+    $out['status'] = 'ok';
+    $out['code'] = $code->title;
+    $out['type'] = 'fresh';
+    $out['id'] = $code->nid;
+  }
+
+  print drupal_json($out);
+  return;
+}
+function page_get_ac_remaining() {
+  $remaining = _get_ac_remaining();
+  print drupal_json(array('remaining' => $remaining));
+  return;
+}
+function _get_ac_remaining() {
+  //count unused
+  $tid = 2;
+  $output = taxonomy_term_count_nodes($tid);
+  return $output;
+}
+function _matching_ac_code($type_tid, $fbuid_tid) {
+  $tids = array($type_tid , $fbuid_tid);
+  $db_selected_result = taxonomy_select_nodes($tids, 'AND');
+  return db_fetch_object($db_selected_result);
+
+}
+function _check_term_exists($term_name) {
+  $term = taxonomy_get_term_by_name($term_name);
+  return $term[0];
+}
+
+function _get_unused_ac_code() {
+  $tids = array(2);
+  $db_result = taxonomy_select_nodes($tids);
+  $node_selected = db_fetch_object($db_result);
+  return $node_selected;
+
+}
+
+function process_new_ac($session) {
+  $term = array(
+    'vid' => 2, // Voacabulary ID: 2 = FBUID VOCAB
+    'name' => '896050346', // Term Name
+    'synonyms' => 'Nat Weerawan', // (Optional) Synonym of this term
+  );
+    $ac = _get_unused_ac_code();
+    if ($ac) {
+      $node = node_load($ac->nid);
+      _save_term_on_node($term, $node);
+    }
+
+    return $_ret;
+}
+
+function _save_term_on_node(&$fb_user_term, &$node) {
+  $user_term_to_save = null;
+
+  $used_term = new stdClass(); $used_term->vid = 1; $used_term->tid = 1;
+
+  $user_exists = _check_term_exists($fb_user_term['name']);
+
+
+  if ($user_exists == false) {
+    $save_term = taxonomy_save_term($fb_user_term);
+
+    $inserted_term = _check_term_exists($fb_user_term['name']);
+
+    $user_term_to_save = $inserted_term;
+  }
+  else {
+    $user_term_to_save  =  $user_exists;;
+  }
+
+  $taxonomy[$user_term_to_save->tid] = $user_term_to_save;
+  $taxonomy[$used_term->tid]= $used_term;
+
+  $node->taxonomy = $taxonomy;
+  node_save($node);
+}
+
+/**
+  * Helper function to validate facebook session.
+  */
+function _validate_facebook_session($args, $app_secret) {
+  $payload = '';
+  ksort($args);
+  foreach ($args as $key => $value) {
+    if ($key != 'sig') {
+      $payload .= $key . '=' . $value;
+    }
+  }
+  $hash_in = $payload . $app_secret;
+  $sig = $args['sig'];
+  if (md5($hash_in) != $sig) {
+    return null;
+  }
+  return $args;
+}
+
+function verify_js() {
+  Header('Location: http://together.in.th/drupal6/facebook/page/ac/get');
+  return;
+
+}
